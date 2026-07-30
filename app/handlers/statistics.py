@@ -35,7 +35,7 @@ async def _send_stats(message: Message, start: datetime, end: datetime) -> None:
         break
 
 
-@router.message(F.text == "📊 Статистика")
+@router.message(F.text == "Статистика")
 async def statistics_menu(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("Выберите период.", reply_markup=period_keyboard)
@@ -47,7 +47,7 @@ async def back_to_main(message: Message, state: FSMContext):
     await message.answer("Главное меню.", reply_markup=statistics_keyboard)
 
 
-@router.message(F.text == "❌ Отмена")
+@router.message(F.text == "Отмена")
 async def cancel_period(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("Выберите период.", reply_markup=period_keyboard)
