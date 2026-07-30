@@ -67,7 +67,7 @@ def setup_scheduler(bot: Bot) -> None:
         send_daily_report,
         trigger="cron",
         hour=15,
-        minute=10,
+        minute=45,
         kwargs={"bot": bot},
         id="daily_stats",
         replace_existing=True,

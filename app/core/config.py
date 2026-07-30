@@ -5,7 +5,7 @@ class Settings(BaseSettings):
     BOT_TOKEN: str
     DATABASE_URL: str
 
-    GOOGLE_CREDENTIALS_PATH: str = "credentials/google-sa.json"
+    GOOGLE_CREDENTIALS_PATH: str = "/app/app/credentials/google-sa.json"
     GOOGLE_SHEET_ID: str
     GOOGLE_SHEET_WORKSHEET: str = "Sheet1"
 
