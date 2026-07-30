@@ -1,12 +1,15 @@
 services:
   bot:
-    build: .
-    container_name: support-stats-bot
-    restart: unless-stopped
-    env_file:
-      - .env
-    networks:
-      - intercom-network
+      build: .
+      container_name: support-stats-bot
+      restart: unless-stopped
+      env_file:
+        - .env
+      volumes:
+        - ./credentials:/app/credentials:ro
+      depends_on:
+        db:
+          condition: service_healthy
 
 networks:
   intercom-network:
