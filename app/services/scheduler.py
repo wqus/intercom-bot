@@ -8,6 +8,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.core.dependencies import get_db
 from app.repositories.statistics_repository import StatisticsRepository
 from app.repositories.user_repository import UsersRepository
+from app.services.sheets_service import append_daily_stats
 from app.services.statistics_service import StatisticsService
 from app.utils.formatter import format_statistics
 
@@ -20,6 +21,7 @@ async def send_daily_report(bot: Bot) -> None:
     now = datetime.now(timezone.utc)
     end = now.replace(hour=0, minute=0, second=0, microsecond=0)
     start = end - timedelta(days=1)
+    report_date = start.date()
 
     try:
         async for session in get_db():
@@ -35,6 +37,12 @@ async def send_daily_report(bot: Bot) -> None:
             break
         else:
             return
+
+        # Google Sheets
+        try:
+            await asyncio.to_thread(append_daily_stats, stats, report_date)
+        except Exception:
+            logger.exception("Google Sheets append failed")
 
         if not user_ids:
             logger.warning("No users in DB, daily report skipped")
