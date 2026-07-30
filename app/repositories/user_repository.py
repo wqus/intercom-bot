@@ -1,4 +1,5 @@
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
@@ -14,24 +15,21 @@ class UsersRepository:
         username: str | None,
         full_name: str | None,
     ) -> User:
-        stmt = select(User).where(User.telegram_id == telegram_id)
+        stmt = insert(User).values(
+            telegram_id=telegram_id,
+            username=username,
+            full_name=full_name,
+        ).on_conflict_do_update(
+            index_elements=["telegram_id"],
+            set_={
+                "username": username,
+                "full_name": full_name,
+            }
+        ).returning(User)
+
         result = await self.session.execute(stmt)
-        user = result.scalar_one_or_none()
-
-        if user is None:
-            user = User(
-                telegram_id=telegram_id,
-                username=username,
-                full_name=full_name,
-            )
-            self.session.add(user)
-        else:
-            user.username = username
-            user.full_name = full_name
-
         await self.session.commit()
-        await self.session.refresh(user)
-        return user
+        return result.scalar_one()
 
     async def get_all_telegram_ids(self) -> list[int]:
         stmt = select(User.telegram_id)
