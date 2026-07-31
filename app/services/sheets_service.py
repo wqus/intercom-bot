@@ -22,16 +22,15 @@ HEADERS = [
     "escalated",
     "processed_pct",
     "escalated_pct",
-    "template",
-    "llm",
-    "conversation",
-    "ticket",
+    "result_template",
+    "result_llm",
+    "type_conversation",
+    "type_ticket",
     "reason_operator",
     "reason_no_category",
     "reason_attachments",
     "reason_llm",
     "reason_internal",
-    "reason_unknown",
 ]
 
 
@@ -45,43 +44,13 @@ def _get_worksheet():
     return spreadsheet.worksheet(settings.GOOGLE_SHEET_WORKSHEET)
 
 
-def _normalize(item, enum_cls):
-    """Enum | name | value → Enum member."""
-    if item is None:
-        return None
-    if isinstance(item, enum_cls):
-        return item
-    if isinstance(item, str):
-        if item in enum_cls.__members__:
-            return enum_cls[item]
-        try:
-            return enum_cls(item)
-        except ValueError:
-            return None
-    return None
-
-
-def _count_by_key(
-    rows: list,
-    enum_cls,
-    mapping: dict,
-) -> tuple[dict[str, int], int]:
+def _count_by_key(rows: list, mapping: dict) -> dict[str, int]:
     result = {col: 0 for col in mapping.values()}
-    unknown = 0
-
     for item, count in rows:
-        member = _normalize(item, enum_cls)
-        if member is None:
-            unknown += count
-            continue
-        col = mapping.get(member)
-        if col is None:
-            unknown += count
-        else:
+        col = mapping.get(item)
+        if col is not None:
             result[col] = result.get(col, 0) + count
-
-    return result, unknown
-
+    return result
 
 def stats_to_row(stats: dict[str, Any], report_date: date) -> list:
     total = stats["total"]
@@ -91,13 +60,12 @@ def stats_to_row(stats: dict[str, Any], report_date: date) -> list:
     escalated_pct = round(escalated / total * 100, 1) if total else 0.0
 
     result_map = {
-        RequestResult.TEMPLATE: "template",
-        RequestResult.LLM: "llm",
-        RequestResult.ESCALATED: "escalated",
+        RequestResult.TEMPLATE: "result_template",
+        RequestResult.LLM: "result_llm",
     }
     type_map = {
-        RequestType.CONVERSATION: "conversation",
-        RequestType.TICKET: "ticket",
+        RequestType.CONVERSATION: "type_conversation",
+        RequestType.TICKET: "type_ticket",
     }
     reason_map = {
         EscalationReason.USER_REQUESTED_OPERATOR: "reason_operator",
@@ -107,15 +75,9 @@ def stats_to_row(stats: dict[str, Any], report_date: date) -> list:
         EscalationReason.INTERNAL_ERROR: "reason_internal",
     }
 
-    results, _ = _count_by_key(
-        stats.get("results") or [], RequestResult, result_map
-    )
-    types, _ = _count_by_key(
-        stats.get("request_types") or [], RequestType, type_map
-    )
-    reasons, reason_unknown = _count_by_key(
-        stats.get("reasons") or [], EscalationReason, reason_map
-    )
+    results = _count_by_key(stats.get("results") or [], result_map)
+    types = _count_by_key(stats.get("request_types") or [], type_map)
+    reasons = _count_by_key(stats.get("reasons") or [], reason_map)
 
     row_dict = {
         "date": report_date.isoformat(),
@@ -124,16 +86,15 @@ def stats_to_row(stats: dict[str, Any], report_date: date) -> list:
         "escalated": escalated,
         "processed_pct": processed_pct,
         "escalated_pct": escalated_pct,
-        "template": results.get("template", 0),
-        "llm": results.get("llm", 0),
-        "conversation": types.get("conversation", 0),
-        "ticket": types.get("ticket", 0),
+        "result_template": results.get("result_template", 0),
+        "result_llm": results.get("result_llm", 0),
+        "type_conversation": types.get("type_conversation", 0),
+        "type_ticket": types.get("type_ticket", 0),
         "reason_operator": reasons.get("reason_operator", 0),
         "reason_no_category": reasons.get("reason_no_category", 0),
         "reason_attachments": reasons.get("reason_attachments", 0),
         "reason_llm": reasons.get("reason_llm", 0),
         "reason_internal": reasons.get("reason_internal", 0),
-        "reason_unknown": reason_unknown,
     }
     return [row_dict[h] for h in HEADERS]
 
