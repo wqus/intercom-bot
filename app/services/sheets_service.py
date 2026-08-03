@@ -24,12 +24,14 @@ HEADERS = [
     "escalated_pct",
     "result_template",
     "result_llm",
+    "result_ignored",
     "type_conversation",
     "type_ticket",
     "reason_operator",
     "reason_no_category",
     "reason_attachments",
     "reason_llm",
+    "reason_wants_new_school",
     "reason_internal",
 ]
 
@@ -62,6 +64,7 @@ def stats_to_row(stats: dict[str, Any], report_date: date) -> list:
     result_map = {
         RequestResult.TEMPLATE: "result_template",
         RequestResult.LLM: "result_llm",
+        RequestResult.IGNORED: "result_ignored",
     }
     type_map = {
         RequestType.CONVERSATION: "type_conversation",
@@ -72,9 +75,9 @@ def stats_to_row(stats: dict[str, Any], report_date: date) -> list:
         EscalationReason.NO_CATEGORY: "reason_no_category",
         EscalationReason.ATTACHMENTS: "reason_attachments",
         EscalationReason.LLM_CANNOT_ANSWER: "reason_llm",
+        EscalationReason.WANTS_NEW_SCHOOL: "reason_wants_new_school",
         EscalationReason.INTERNAL_ERROR: "reason_internal",
     }
-
     results = _count_by_key(stats.get("results") or [], result_map)
     types = _count_by_key(stats.get("request_types") or [], type_map)
     reasons = _count_by_key(stats.get("reasons") or [], reason_map)
@@ -86,14 +89,19 @@ def stats_to_row(stats: dict[str, Any], report_date: date) -> list:
         "escalated": escalated,
         "processed_pct": processed_pct,
         "escalated_pct": escalated_pct,
+
         "result_template": results.get("result_template", 0),
         "result_llm": results.get("result_llm", 0),
+        "result_ignored": results.get("result_ignored", 0),
+
         "type_conversation": types.get("type_conversation", 0),
         "type_ticket": types.get("type_ticket", 0),
+
         "reason_operator": reasons.get("reason_operator", 0),
         "reason_no_category": reasons.get("reason_no_category", 0),
         "reason_attachments": reasons.get("reason_attachments", 0),
         "reason_llm": reasons.get("reason_llm", 0),
+        "reason_wants_new_school": reasons.get("reason_wants_new_school", 0),
         "reason_internal": reasons.get("reason_internal", 0),
     }
     return [row_dict[h] for h in HEADERS]
