@@ -7,11 +7,21 @@ RESULT_LABELS = {
     RequestResult.TEMPLATE: "Шаблон",
     RequestResult.LLM: "LLM",
     RequestResult.ESCALATED: "Эскалация",
+    RequestResult.IGNORED: "Игнор",
 }
 
 TYPE_LABELS = {
     RequestType.CONVERSATION: "Диалог",
     RequestType.TICKET: "Тикет",
+}
+
+REASON_LABELS = {
+    EscalationReason.USER_REQUESTED_OPERATOR: "Запросил оператора",
+    EscalationReason.NO_CATEGORY: "Нет категории",
+    EscalationReason.LLM_CANNOT_ANSWER: "LLM не смогла ответить",
+    EscalationReason.INTERNAL_ERROR: "Внутренняя ошибка",
+    EscalationReason.WANTS_NEW_SCHOOL: "Хочет в новую школу",
+    EscalationReason.ATTACHMENTS: "Есть вложения",
 }
 
 
@@ -58,10 +68,8 @@ def format_statistics(
         for reason, count in reasons:
             if reason is None:
                 label = "Не указана"
-            elif isinstance(reason, EscalationReason):
-                label = reason.value
             else:
-                label = str(reason)
+                label = REASON_LABELS.get(reason, str(reason))
             lines.append(f"• {label}: {count}")
 
     request_types = stats.get("request_types") or []
