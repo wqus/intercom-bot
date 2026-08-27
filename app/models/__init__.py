@@ -1,4 +1,3 @@
-from app.models.requests import Request
-from app.models.user import User
+from app.models.requests import InboundEvent, SupportInteraction, EscalatedConversation, User
 
-__all__ = ("Request", "User")
+__all__ = ("InboundEvent", "SupportInteraction", "EscalatedConversation", "User")

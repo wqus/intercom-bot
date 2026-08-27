@@ -1,83 +1,77 @@
 from datetime import datetime
-from typing import Any
-
-from app.models.requests import EscalationReason, RequestResult, RequestType
-
-RESULT_LABELS = {
-    RequestResult.TEMPLATE: "Шаблон",
-    RequestResult.LLM: "LLM",
-    RequestResult.ESCALATED: "Эскалация",
-    RequestResult.IGNORED: "Игнор",
-}
-
-TYPE_LABELS = {
-    RequestType.CONVERSATION: "Диалог",
-    RequestType.TICKET: "Тикет",
-}
-
-REASON_LABELS = {
-    EscalationReason.USER_REQUESTED_OPERATOR: "Запросил оператора",
-    EscalationReason.NO_CATEGORY: "Нет категории",
-    EscalationReason.LLM_CANNOT_ANSWER: "LLM не смогла ответить",
-    EscalationReason.INTERNAL_ERROR: "Внутренняя ошибка",
-    EscalationReason.WANTS_NEW_SCHOOL: "Хочет в новую школу",
-    EscalationReason.ATTACHMENTS: "Есть вложения",
-}
 
 
-def format_statistics(
-    stats: dict[str, Any],
-    start: datetime,
-    end: datetime,
-) -> str:
+def _pct(value: int | float, denominator: int | float) -> float:
+    return value / denominator * 100 if denominator else 0.0
+
+
+def format_statistics(stats: dict, start: datetime, end: datetime) -> str:
     total = stats["total"]
     processed = stats["processed"]
     escalated = stats["escalated"]
-
-    header = (
-        "📊 <b>Статистика</b>\n"
-        f"📅 {start.strftime('%d.%m.%Y %H:%M')} — {end.strftime('%d.%m.%Y %H:%M')}"
-    )
-
-    if total == 0:
-        return f"{header}\n\nЗа этот период обращений нет."
-
-    processed_pct = processed / total * 100
-    escalated_pct = escalated / total * 100
+    with_interaction = stats.get("with_interaction", 0)
+    automated = stats.get("automated", 0)
+    llm_used = stats.get("llm_used", 0)
+    without_interaction = max(0, total - with_interaction)
 
     lines = [
-        header,
+        "📊 <b>Статистика Intercom</b>",
+        f"📅 {start:%d.%m.%Y} — {end:%d.%m.%Y}",
         "",
-        f"🔹 Всего: <b>{total}</b>",
-        f"✅ Обработано: <b>{processed}</b> ({processed_pct:.1f}%)",
-        f"⚠️ Эскалировано: <b>{escalated}</b> ({escalated_pct:.1f}%)",
+        f"🔹 Всего обращений: <b>{total}</b> (100.0%)",
+        f"✅ Обработано без эскалации: <b>{processed}</b> ({_pct(processed, total):.1f}%)",
+        f"⚠️ Эскалировано: <b>{escalated}</b> ({_pct(escalated, total):.1f}%)",
+        f"🧩 Есть взаимодействие: <b>{with_interaction}</b> ({_pct(with_interaction, total):.1f}%)",
+        f"⏳ Без взаимодействий: <b>{without_interaction}</b> ({_pct(without_interaction, total):.1f}%)",
+        "",
+        "<b>Результат pipeline:</b>",
     ]
 
-    results = stats.get("results") or []
-    if results:
-        lines.append("")
-        lines.append("<b>По результату:</b>")
-        for result, count in results:
-            label = RESULT_LABELS.get(result, str(result))
-            lines.append(f"• {label}: {count}")
+    results = dict(stats.get("results") or [])
+    result_den = processed
+    lines += [
+        f"• Шаблон: {results.get('template', 0)} ({_pct(results.get('template', 0), result_den):.1f}%)",
+        f"• LLM: {results.get('llm', 0)} ({_pct(results.get('llm', 0), result_den):.1f}%)",
+        f"• Игнор: {results.get('ignored', 0)} ({_pct(results.get('ignored', 0), result_den):.1f}%)",
+    ]
+
+    types = dict(stats.get("request_types") or [])
+    if types:
+        lines += [
+            "",
+            "<b>Тип обращений:</b>",
+            f"• Диалоги: {types.get('conversation', 0)} ({_pct(types.get('conversation', 0), total):.1f}%)",
+            f"• Тикеты: {types.get('ticket', 0)} ({_pct(types.get('ticket', 0), total):.1f}%)",
+            f"• Другое: {types.get('other', 0)} ({_pct(types.get('other', 0), total):.1f}%)",
+        ]
+
+    if with_interaction:
+        lines += [
+            "",
+            "<b>Автоматизация:</b>",
+            f"• Automated: {automated} ({_pct(automated, with_interaction):.1f}%)",
+            f"• Использован LLM: {llm_used} ({_pct(llm_used, with_interaction):.1f}%)",
+        ]
 
     reasons = stats.get("reasons") or []
     if reasons:
-        lines.append("")
-        lines.append("<b>Причины эскалации:</b>")
+        labels = {
+            "user_requested_operator": "Запросил оператора",
+            "no_category": "Нет категории",
+            "attachments": "Вложения",
+            "llm_cannot_answer": "LLM не смогла ответить",
+            "wants_new_school": "Хочет в новую школу",
+            "internal_error": "Внутренняя ошибка",
+            "llm_noise": "LLM noise",
+            "clarification_exhausted": "Исчерпаны уточнения",
+            "delivery_failure": "Ошибка доставки",
+            "high_risk_refund": "Высокорисковый возврат",
+            "high_risk_personal_data": "Персональные данные",
+            "high_risk_complaint": "Высокорисковая жалоба",
+        }
+        lines += ["", "<b>Причины эскалации:</b>"]
         for reason, count in reasons:
-            if reason is None:
-                label = "Не указана"
-            else:
-                label = REASON_LABELS.get(reason, str(reason))
-            lines.append(f"• {label}: {count}")
-
-    request_types = stats.get("request_types") or []
-    if request_types:
-        lines.append("")
-        lines.append("<b>Типы обращений:</b>")
-        for rtype, count in request_types:
-            label = TYPE_LABELS.get(rtype, str(rtype))
-            lines.append(f"• {label}: {count}")
+            key = getattr(reason, "value", reason)
+            lines.append(f"• {labels.get(key, key)}: {count} ({_pct(count, escalated):.1f}%)")
 
     return "\n".join(lines)

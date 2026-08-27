@@ -2,10 +2,7 @@ import asyncio
 import logging
 
 from app.bot import bot
-from app.database.base import Base
-from app.database.engine import engine
 from app.dispatcher import dp
-from app.models import Request, User  # noqa: F401
 from app.services.scheduler import scheduler, setup_scheduler
 
 logging.basicConfig(
@@ -14,13 +11,8 @@ logging.basicConfig(
 )
 
 
-async def init_db() -> None:
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-
 async def main() -> None:
-    await init_db()
+
     setup_scheduler(bot)
     try:
         await dp.start_polling(bot)

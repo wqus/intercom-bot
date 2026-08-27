@@ -1,10 +1,12 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+from app.core.config import settings
 from app.core.dependencies import get_db
 from app.repositories.statistics_repository import StatisticsRepository
 from app.repositories.user_repository import UsersRepository
@@ -14,38 +16,44 @@ from app.utils.formatter import format_statistics
 
 logger = logging.getLogger(__name__)
 
-scheduler = AsyncIOScheduler(timezone=timezone.utc)
+REPORT_TZ = ZoneInfo(settings.REPORT_TIMEZONE)
+scheduler = AsyncIOScheduler(timezone=REPORT_TZ)
 
 
 async def send_daily_report(bot: Bot) -> None:
-    now = datetime.now(timezone.utc)
-    end = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    start = end - timedelta(days=1)
-    report_date = start.date()
+    now = datetime.now(REPORT_TZ)
+    end_local = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    start_local = end_local - timedelta(days=1)
+
+    # PostgreSQL timestamptz comparisons are safest with aware datetimes.
+    start = start_local.astimezone(timezone.utc)
+    end = end_local.astimezone(timezone.utc)
+    report_date = start_local.date()
 
     try:
         async for session in get_db():
-            stats_repo = StatisticsRepository(session)
-            users_repo = UsersRepository(session)
-
-            service = StatisticsService(stats_repo)
+            repo = StatisticsRepository(session)
+            service = StatisticsService(repo)
             stats = await service.get_statistics(start, end)
-            text = "📬 <b>Ежедневный отчёт</b>\n\n" + format_statistics(
-                stats, start, end
+            users_repo = UsersRepository(session)
+            user_ids = await users_repo.get_report_recipient_ids(
+                settings.REPORT_TELEGRAM_IDS
             )
-            user_ids = await users_repo.get_all_telegram_ids()
             break
         else:
             return
 
-        # Google Sheets
+        text = "📬 <b>Ежедневный отчёт</b>\n\n" + format_statistics(
+            stats, start_local, end_local
+        )
+
         try:
             await asyncio.to_thread(append_daily_stats, stats, report_date)
         except Exception:
             logger.exception("Google Sheets append failed")
 
         if not user_ids:
-            logger.warning("No users in DB, daily report skipped")
+            logger.warning("No Telegram report recipients")
             return
 
         sent = 0
@@ -66,11 +74,18 @@ def setup_scheduler(bot: Bot) -> None:
     scheduler.add_job(
         send_daily_report,
         trigger="cron",
-        hour=15,
-        minute=45,
+        hour=settings.REPORT_HOUR,
+        minute=settings.REPORT_MINUTE,
         kwargs={"bot": bot},
         id="daily_stats",
         replace_existing=True,
+        coalesce=True,
+        misfire_grace_time=3600,
     )
     scheduler.start()
-    logger.info("Scheduler started")
+    logger.info(
+        "Scheduler started: %02d:%02d %s",
+        settings.REPORT_HOUR,
+        settings.REPORT_MINUTE,
+        settings.REPORT_TIMEZONE,
+    )

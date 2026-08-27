@@ -1,0 +1,8 @@
+aiogram==3.26.0
+APScheduler==3.11.1
+SQLAlchemy==2.0.51
+asyncpg==0.31.0
+pydantic-settings==2.14.2
+gspread==6.2.1
+google-auth==2.40.3
+python-dotenv==1.2.2

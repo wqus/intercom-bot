@@ -9,24 +9,16 @@ class UsersRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def upsert_user(
-        self,
-        telegram_id: int,
-        username: str | None,
-        full_name: str | None,
-    ) -> User:
-        stmt = insert(User).values(
-            telegram_id=telegram_id,
-            username=username,
-            full_name=full_name,
-        ).on_conflict_do_update(
-            index_elements=["telegram_id"],
-            set_={
-                "username": username,
-                "full_name": full_name,
-            }
-        ).returning(User)
-
+    async def upsert_user(self, telegram_id: int, username: str | None, full_name: str | None) -> User:
+        stmt = (
+            insert(User)
+            .values(telegram_id=telegram_id, username=username, full_name=full_name)
+            .on_conflict_do_update(
+                index_elements=["telegram_id"],
+                set_={"username": username, "full_name": full_name},
+            )
+            .returning(User)
+        )
         result = await self.session.execute(stmt)
         await self.session.commit()
         return result.scalar_one()
@@ -35,3 +27,16 @@ class UsersRepository:
         stmt = select(User.telegram_id)
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+    async def get_report_recipient_ids(self, configured_ids: str = "") -> list[int]:
+        if configured_ids.strip():
+            result = []
+            for raw in configured_ids.split(","):
+                raw = raw.strip()
+                if raw:
+                    try:
+                        result.append(int(raw))
+                    except ValueError:
+                        pass
+            return result
+        return await self.get_all_telegram_ids()
