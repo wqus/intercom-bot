@@ -126,11 +126,11 @@ class StatisticsRepository:
                     (InboundEvent.topic.like("conversation.%"), "conversation"),
                     (InboundEvent.topic.like("ticket.%"), "ticket"),
                     else_="other",
-                ),
+                ).label("request_type"),
                 func.count(InboundEvent.id),
             )
             .where(*self._inbound_scope(start, end))
-            .group_by(1)
+            .group_by("request_type")
         )
         result = await self.session.execute(stmt)
         return result.all()
