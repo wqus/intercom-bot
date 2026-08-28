@@ -8,24 +8,21 @@ class StatisticsService:
         self.repository = repository
 
     async def get_statistics(self, start: datetime, end: datetime) -> dict:
-        total = await self.repository.get_total_requests(start, end)
         result_counts = await self.repository.get_result_counts(start, end)
-        with_interaction = result_counts["with_interaction"]
-        escalated = await self.repository.get_escalated_events(start, end)
-
-        # A state-driven escalation can exist without a support_interaction row.
-        # Processed therefore means: interacted with, but not escalated.
-        processed = max(0, with_interaction - escalated)
 
         return {
-            "total": total,
-            "processed": processed,
-            "escalated": escalated,
-            "with_interaction": with_interaction,
+            "total": result_counts["total"],
+            "processed": result_counts["processed"],
+            "escalated": result_counts["escalated"],
+            "ignored": result_counts["ignored"],
+            "with_interaction": result_counts["with_interaction"],
+            "unprocessed": result_counts["unprocessed"],
             "automated": result_counts["automated"],
             "llm_used": result_counts["llm_used"],
+            "automatic_response": result_counts["automatic_response"],
             "results": [
                 ("template", result_counts["template"]),
+                ("top3", result_counts["top3"]),
                 ("llm", result_counts["llm"]),
                 ("ignored", result_counts["ignored"]),
             ],

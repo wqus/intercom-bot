@@ -1,6 +1,9 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
-TZ = timezone.utc
+from app.core.config import settings
+
+TZ = ZoneInfo(settings.REPORT_TIMEZONE)
 
 
 def get_today_range() -> tuple[datetime, datetime]:

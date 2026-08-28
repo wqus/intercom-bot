@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
@@ -111,15 +111,18 @@ async def custom_period_start_date(message: Message, state: FSMContext):
 
 @router.message(StatisticsPeriod.waiting_end)
 async def custom_period_end_date(message: Message, state: FSMContext):
-    end = parse_date(message.text or "")
+    raw_end = (message.text or "").strip()
+    end = parse_date(raw_end)
     if end is None:
         await message.answer(
             "Не понял дату. Пример: <code>30.07.2026</code> или <code>30.07.2026 23:59</code>"
         )
         return
 
-    if end.hour == 0 and end.minute == 0 and end.second == 0:
-        end = end.replace(hour=23, minute=59, second=59)
+    # Date-only end is inclusive for the Telegram UI, so convert it to the
+    # exclusive next-day midnight used by repository queries.
+    if " " not in raw_end:
+        end = end + timedelta(days=1)
 
     data = await state.get_data()
     start = datetime.fromisoformat(data["start"])

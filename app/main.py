@@ -12,7 +12,9 @@ logging.basicConfig(
 
 
 async def main() -> None:
-
+    # IMPORTANT: this bot does NOT run create_all() against the main DB.
+    # The Intercom application owns the schema. This service only reads the
+    # existing tables and writes Telegram-bot users.
     setup_scheduler(bot)
     try:
         await dp.start_polling(bot)
