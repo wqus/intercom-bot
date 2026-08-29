@@ -11,7 +11,7 @@ class Settings(BaseSettings):
 
     REPORT_TIMEZONE: str = "Europe/Moscow"
     REPORT_HOUR: int = 4
-    REPORT_MINUTE: int = 45
+    REPORT_MINUTE: int = 50
 
     # Optional: if set, daily reports are sent only to these Telegram IDs.
     # If empty, all users registered in the bot's users table receive reports.
