@@ -1,4 +1,5 @@
 from datetime import date
+import time
 from typing import Any
 
 import gspread
@@ -220,19 +221,35 @@ def _get_worksheet():
     return spreadsheet.worksheet(settings.GOOGLE_SHEET_WORKSHEET)
 
 
-def append_daily_stats(stats: dict[str, Any], report_date: date) -> None:
-    if not settings.GOOGLE_SHEET_ID:
-        logger.warning("GOOGLE_SHEET_ID is empty; skipping Google Sheets")
-        return
+RETRYABLE_GOOGLE_STATUS_CODES = {429, 500, 502, 503, 504}
+SHEETS_MAX_ATTEMPTS = 4
+SHEETS_RETRY_DELAYS_SECONDS = (1.0, 3.0, 8.0)
 
+
+def _is_retryable_google_error(exc: Exception) -> bool:
+    """Retry only transient Google API failures; never hide auth/config errors."""
+    if not isinstance(exc, gspread.exceptions.APIError):
+        return False
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None)
+    if status_code in RETRYABLE_GOOGLE_STATUS_CODES:
+        return True
+    # gspread versions can expose the status as ``code`` instead of
+    # ``status_code`` on the response object.
+    return getattr(response, "code", None) in RETRYABLE_GOOGLE_STATUS_CODES
+
+
+def _append_daily_stats_once(stats: dict[str, Any], report_date: date) -> None:
     ws = _get_worksheet()
     existing = _ensure_headers(ws, ws.get_all_values())
     row = stats_to_row(stats, report_date)
     end_col = _col_letter(len(HEADERS))
 
-    # Idempotent by report date: retries update the same row.
+    # Idempotent by report date: a retry updates the same row rather than
+    # creating duplicates.
+    target_date = report_date.isoformat()
     for idx, values in enumerate(existing[1:], start=2):
-        if values and values[0] == report_date.isoformat():
+        if values and values[0] == target_date:
             ws.update(
                 f"A{idx}:{end_col}{idx}",
                 [row],
@@ -243,3 +260,32 @@ def append_daily_stats(stats: dict[str, Any], report_date: date) -> None:
 
     ws.append_row(row, value_input_option="USER_ENTERED")
     logger.info("Daily stats appended to Google Sheets for %s", report_date)
+
+
+def append_daily_stats(stats: dict[str, Any], report_date: date) -> None:
+    if not settings.GOOGLE_SHEET_ID:
+        logger.warning("GOOGLE_SHEET_ID is empty; skipping Google Sheets")
+        return
+
+    last_error: Exception | None = None
+    for attempt in range(1, SHEETS_MAX_ATTEMPTS + 1):
+        try:
+            _append_daily_stats_once(stats, report_date)
+            return
+        except Exception as exc:
+            last_error = exc
+            if not _is_retryable_google_error(exc) or attempt >= SHEETS_MAX_ATTEMPTS:
+                raise
+            delay = SHEETS_RETRY_DELAYS_SECONDS[attempt - 1]
+            logger.warning(
+                "Transient Google Sheets error (attempt %d/%d); retrying in %.1fs: %s",
+                attempt,
+                SHEETS_MAX_ATTEMPTS,
+                delay,
+                exc,
+            )
+            time.sleep(delay)
+
+    # Defensive: the loop either returns or raises above.
+    if last_error is not None:
+        raise last_error
