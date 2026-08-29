@@ -21,6 +21,7 @@ class StatisticsService:
             "results": [
                 ("template", result_counts["template"]),
                 ("llm", result_counts["llm"]),
+                ("escalated", result_counts["escalated"]),
                 ("ignored", result_counts["ignored"]),
             ],
             "reasons": await self.repository.get_escalation_reasons(start, end),

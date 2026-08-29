@@ -29,6 +29,8 @@ HEADERS = [
     "result_template_pct",
     "result_llm",
     "result_llm_pct",
+    "result_escalated",
+    "result_escalated_pct",
     "result_ignored",
     "result_ignored_pct",
     "type_conversation",
@@ -57,7 +59,7 @@ def _count_by_key(rows, mapping):
         key = getattr(item, "value", item)
         col = mapping.get(key)
         if col:
-            result[col] = int(count)
+            result[col] += int(count)
     return result
 
 
@@ -65,6 +67,8 @@ def _reason_values(stats: dict[str, Any]) -> dict[str, int]:
     mapping = {
         "user_requested_operator": "reason_operator",
         "no_category": "reason_no_category",
+        "clarification_exhausted": "reason_no_category",
+        "wants_new_school": "reason_no_category",
         # High-risk paths are intentionally grouped into the same public
         # reporting bucket as "no category" for now. This keeps the sheet
         # compact while preserving the fact that the event was escalated.
@@ -90,6 +94,7 @@ def stats_to_row(stats: dict[str, Any], report_date: date) -> list:
     result_llm = 0
     result_ignored = int(stats.get("ignored", 0))
     for key, count in stats.get("results") or []:
+        key = getattr(key, "value", key)
         if key in {"template", "top3"}:
             result_template += int(count)
         elif key == "llm":
@@ -101,9 +106,14 @@ def stats_to_row(stats: dict[str, Any], report_date: date) -> list:
         "type_conversation": 0,
         "type_ticket": 0,
     }
+    type_aliases = {
+        "conversation": "type_conversation",
+        "ticket": "type_ticket",
+    }
     for key, count in stats.get("request_types") or []:
-        if key in types:
-            types[key] = int(count)
+        column = type_aliases.get(getattr(key, "value", key))
+        if column:
+            types[column] = int(count)
 
     reasons = _reason_values(stats)
     escalation_den = escalated
@@ -119,6 +129,8 @@ def stats_to_row(stats: dict[str, Any], report_date: date) -> list:
         "result_template_pct": _pct(result_template, total),
         "result_llm": result_llm,
         "result_llm_pct": _pct(result_llm, total),
+        "result_escalated": escalated,
+        "result_escalated_pct": _pct(escalated, total),
         "result_ignored": result_ignored,
         "result_ignored_pct": _pct(result_ignored, total),
         "type_conversation": types["type_conversation"],

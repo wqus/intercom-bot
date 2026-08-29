@@ -132,10 +132,11 @@ class StatisticsRepository:
             )
         )
 
-        # A request is considered processed when the system produced any
-        # non-escalation outcome. ``wants_new_school`` remains a handled flow
-        # even if a separate escalation record exists for the same event.
-        processed_system = is_llm | is_ignored | is_template | events.c.wants_new_school
+        # ``processed`` means the system handled the request automatically.
+        # Escalation is a separate final outcome and is not included in this
+        # number. ``wants_new_school`` is a supported automated flow and is
+        # therefore included in the template/processed bucket.
+        processed_system = is_llm | is_template
 
         stmt = select(
             func.count().label("total_scoped"),
@@ -185,87 +186,82 @@ class StatisticsRepository:
         return (await self.get_result_counts(start, end))["escalated"]
 
     async def get_escalation_reasons(self, start: datetime, end: datetime):
-        """Count one primary escalation reason per escalated inbound event.
+        """Count exactly one public escalation reason per inbound event.
 
-        Escalation is normally persisted in ``escalated_conversations`` and also
-        represented by an ``escalate`` interaction. We coalesce those two sources
-        at event level so the report does not double-count and still sees an
-        escalation if one persistence path is missing.
+        One event may have several raw escalation traces. We first combine all
+        raw reasons from both persistence paths, then select a deterministic
+        primary business bucket by explicit priority. This guarantees that the
+        public reason counts partition ``escalated`` instead of double-counting.
         """
-        interaction_reasons = (
-            select(
-                SupportInteraction.event_id.label("event_id"),
-                func.min(SupportInteraction.escalation_reason).label("reason"),
-            )
-            .where(
-                SupportInteraction.event_id.is_not(None),
-                SupportInteraction.decision == "escalate",
-            )
-            .group_by(SupportInteraction.event_id)
-        ).subquery()
-
-        persistent_reasons = (
+        raw_reasons = select(
+            SupportInteraction.event_id.label("event_id"),
+            SupportInteraction.escalation_reason.label("reason"),
+        ).where(
+            SupportInteraction.event_id.is_not(None),
+            SupportInteraction.decision == "escalate",
+            SupportInteraction.escalation_reason.is_not(None),
+        ).union_all(
             select(
                 EscalatedConversation.source_event_id.label("event_id"),
-                func.min(EscalatedConversation.reason).label("reason"),
+                EscalatedConversation.reason.label("reason"),
+            ).where(
+                EscalatedConversation.source_event_id.is_not(None),
+                EscalatedConversation.reason.is_not(None),
             )
-            .where(EscalatedConversation.source_event_id.is_not(None))
-            .group_by(EscalatedConversation.source_event_id)
         ).subquery()
 
-        raw_reason = func.coalesce(
-            persistent_reasons.c.reason,
-            interaction_reasons.c.reason,
-            "no_category",
-        )
-        # Public reporting intentionally has no ``other`` bucket.
-        #
-        # - ``wants_new_school`` is not a public escalation reason, but if it
-        #   reaches the escalation-reason stream it is grouped into the
-        #   existing no-category bucket.
-        # - High-risk paths are also intentionally grouped into no-category
-        #   for the current reporting contract.
-        # - Any future/unknown escalation reason is retained in the aggregate
-        #   rather than silently disappearing from the report and is grouped
-        #   into no-category until a dedicated public bucket is introduced.
+        reason_rank = case(
+            # User explicitly requested a person: strongest business reason.
+            (raw_reasons.c.reason == "user_requested_operator", 60),
+            # Attachments require a human review even when another generic
+            # reason is also present.
+            (raw_reasons.c.reason == "attachments", 50),
+            # AI hand-off is distinct from ordinary no-category fallback.
+            (raw_reasons.c.reason == "llm_cannot_answer", 40),
+            # Technical failures are grouped under the internal bucket.
+            (raw_reasons.c.reason.in_(("internal_error", "delivery_failure")), 30),
+            # Current reporting contract groups high-risk, exhausted
+            # clarification and wants-new-school escalation into no-category.
+            (raw_reasons.c.reason.in_(
+                (
+                    "no_category",
+                    "clarification_exhausted",
+                    "wants_new_school",
+                    "high_risk_refund",
+                    "high_risk_personal_data",
+                    "high_risk_complaint",
+                )
+            ), 20),
+            # Future/unknown reasons are deliberately visible in logs but
+            # grouped into the existing no-category business bucket until a
+            # dedicated public category is introduced.
+            else_=20,
+        ).label("reason_rank")
+
+        event_reason_rank = (
+            select(
+                raw_reasons.c.event_id,
+                func.max(reason_rank).label("reason_rank"),
+            )
+            .group_by(raw_reasons.c.event_id)
+        ).subquery()
+
         public_reason = case(
-            (raw_reason.in_((
-                "wants_new_school",
-                "high_risk_refund",
-                "high_risk_personal_data",
-                "high_risk_complaint",
-                "clarification_exhausted",
-            )), "no_category"),
-            (raw_reason.in_((
-                "user_requested_operator",
-                "no_category",
-                "attachments",
-                "llm_cannot_answer",
-                "internal_error",
-                "delivery_failure",
-            )), raw_reason),
+            (event_reason_rank.c.reason_rank == 60, "user_requested_operator"),
+            (event_reason_rank.c.reason_rank == 50, "attachments"),
+            (event_reason_rank.c.reason_rank == 40, "llm_cannot_answer"),
+            (event_reason_rank.c.reason_rank == 30, "internal_error"),
             else_="no_category",
-        )
+        ).label("reason")
 
         event_reasons = (
             select(
                 InboundEvent.id.label("event_id"),
-                public_reason.label("reason"),
+                public_reason,
             )
             .select_from(InboundEvent)
-            .outerjoin(
-                persistent_reasons,
-                persistent_reasons.c.event_id == InboundEvent.id,
-            )
-            .outerjoin(
-                interaction_reasons,
-                interaction_reasons.c.event_id == InboundEvent.id,
-            )
+            .join(event_reason_rank, event_reason_rank.c.event_id == InboundEvent.id)
             .where(*self._inbound_scope(start, end))
-            .where(
-                (persistent_reasons.c.event_id.is_not(None))
-                | (interaction_reasons.c.event_id.is_not(None))
-            )
         ).subquery()
 
         stmt = (
