@@ -56,14 +56,3 @@ class EscalatedConversation(Base):
     source_event_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     escalated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
-
-class User(Base):
-    """Users of the reporting Telegram bot."""
-
-    __tablename__ = "users"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
-    username: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

@@ -10,8 +10,8 @@ class Settings(BaseSettings):
     GOOGLE_SHEET_WORKSHEET: str = "Daily"
 
     REPORT_TIMEZONE: str = "Europe/Moscow"
-    REPORT_HOUR: int = 10
-    REPORT_MINUTE: int = 0
+    REPORT_HOUR: int = 4
+    REPORT_MINUTE: int = 5
 
     # Optional: if set, daily reports are sent only to these Telegram IDs.
     # If empty, all users registered in the bot's users table receive reports.
