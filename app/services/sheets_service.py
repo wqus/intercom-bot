@@ -25,19 +25,16 @@ HEADERS = [
     "escalated",
     "processed_pct",
     "escalated_pct",
-
     "result_template",
     "result_template_pct",
     "result_llm",
     "result_llm_pct",
     "result_ignored",
     "result_ignored_pct",
-
     "type_conversation",
     "type_conversation_pct",
     "type_ticket",
     "type_ticket_pct",
-
     "reason_operator",
     "reason_operator_pct",
     "reason_no_category",
@@ -48,17 +45,6 @@ HEADERS = [
     "reason_llm_pct",
     "reason_internal",
     "reason_internal_pct",
-
-    # Additional quality/detail metrics that were explicitly requested or are
-    # needed to make the aggregated categories auditable.
-    "result_top3",
-    "result_top3_pct",
-    "result_automatic_response",
-    "result_automatic_response_pct",
-    "unprocessed",
-    "unprocessed_pct",
-    "reason_other",
-    "reason_other_pct",
 ]
 
 def _pct(value: int | float, denominator: int | float) -> float:
@@ -79,41 +65,37 @@ def _reason_values(stats: dict[str, Any]) -> dict[str, int]:
     mapping = {
         "user_requested_operator": "reason_operator",
         "no_category": "reason_no_category",
+        # High-risk paths are intentionally grouped into the same public
+        # reporting bucket as "no category" for now. This keeps the sheet
+        # compact while preserving the fact that the event was escalated.
+        "high_risk_refund": "reason_no_category",
+        "high_risk_personal_data": "reason_no_category",
+        "high_risk_complaint": "reason_no_category",
         "attachments": "reason_attachments",
         "llm_cannot_answer": "reason_llm",
         "internal_error": "reason_internal",
     }
-    result = _count_by_key(stats.get("reasons") or [], mapping)
-    known = set(mapping)
-    result["reason_other"] = 0
-    for item, count in stats.get("reasons") or []:
-        key = getattr(item, "value", item)
-        if key not in known:
-            result["reason_other"] += int(count)
-    return result
+    return _count_by_key(stats.get("reasons") or [], mapping)
 
 
 def stats_to_row(stats: dict[str, Any], report_date: date) -> list:
     total = int(stats.get("total", 0))
     processed = int(stats.get("processed", 0))
     escalated = int(stats.get("escalated", 0))
-    ignored = int(stats.get("ignored", 0))
-    unprocessed = int(stats.get("unprocessed", 0))
 
-    result_counts = {
-        "result_template": 0,
-        "result_llm": 0,
-        "result_top3": 0,
-        "result_ignored": ignored,
-    }
+    # Top-3 is an automatic response and is intentionally grouped into the
+    # single ``result_template`` business category. The report does not expose
+    # Top-3 as a separate metric.
+    result_template = 0
+    result_llm = 0
+    result_ignored = int(stats.get("ignored", 0))
     for key, count in stats.get("results") or []:
-        if key in {"template", "llm", "top3", "ignored"}:
-            result_counts[f"result_{key}"] = int(count)
-
-    automatic_response = int(
-        stats.get("automatic_response")
-        or (result_counts["result_template"] + result_counts["result_top3"])
-    )
+        if key in {"template", "top3"}:
+            result_template += int(count)
+        elif key == "llm":
+            result_llm += int(count)
+        elif key == "ignored":
+            result_ignored = int(count)
 
     types = {
         "type_conversation": 0,
@@ -133,19 +115,16 @@ def stats_to_row(stats: dict[str, Any], report_date: date) -> list:
         "escalated": escalated,
         "processed_pct": _pct(processed, total),
         "escalated_pct": _pct(escalated, total),
-
-        "result_template": result_counts["result_template"],
-        "result_template_pct": _pct(result_counts["result_template"], total),
-        "result_llm": result_counts["result_llm"],
-        "result_llm_pct": _pct(result_counts["result_llm"], total),
-        "result_ignored": result_counts["result_ignored"],
-        "result_ignored_pct": _pct(result_counts["result_ignored"], total),
-
+        "result_template": result_template,
+        "result_template_pct": _pct(result_template, total),
+        "result_llm": result_llm,
+        "result_llm_pct": _pct(result_llm, total),
+        "result_ignored": result_ignored,
+        "result_ignored_pct": _pct(result_ignored, total),
         "type_conversation": types["type_conversation"],
         "type_conversation_pct": _pct(types["type_conversation"], total),
         "type_ticket": types["type_ticket"],
         "type_ticket_pct": _pct(types["type_ticket"], total),
-
         "reason_operator": reasons["reason_operator"],
         "reason_operator_pct": _pct(reasons["reason_operator"], escalation_den),
         "reason_no_category": reasons["reason_no_category"],
@@ -156,17 +135,6 @@ def stats_to_row(stats: dict[str, Any], report_date: date) -> list:
         "reason_llm_pct": _pct(reasons["reason_llm"], escalation_den),
         "reason_internal": reasons["reason_internal"],
         "reason_internal_pct": _pct(reasons["reason_internal"], escalation_den),
-
-        "result_top3": result_counts["result_top3"],
-        "result_top3_pct": _pct(result_counts["result_top3"], total),
-        "result_automatic_response": automatic_response,
-        "result_automatic_response_pct": _pct(automatic_response, total),
-
-        "unprocessed": unprocessed,
-        "unprocessed_pct": _pct(unprocessed, total),
-
-        "reason_other": reasons["reason_other"],
-        "reason_other_pct": _pct(reasons["reason_other"], escalation_den),
     }
     return [row[h] for h in HEADERS]
 
@@ -207,6 +175,14 @@ def _ensure_headers(ws, existing: list[list[str]]) -> list[list[str]]:
         migrated,
         value_input_option="USER_ENTERED",
     )
+
+    # Explicitly clear columns removed from the reporting contract. Updating a
+    # shorter range does not delete old cells in Google Sheets, so without
+    # this cleanup deprecated columns would remain visible after migration.
+    if len(current) > len(HEADERS):
+        old_end_col = _col_letter(len(current))
+        ws.batch_clear([f"{_col_letter(len(HEADERS) + 1)}1:{old_end_col}{len(existing)}"])
+
     logger.info("Google Sheet headers migrated: %d -> %d columns", len(current), len(HEADERS))
     return migrated
 

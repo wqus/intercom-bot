@@ -106,90 +106,49 @@ class StatisticsRepository:
         return int(await self.session.scalar(stmt) or 0)
 
     async def get_result_counts(self, start: datetime, end: datetime) -> dict[str, int]:
-        """Return event-level outcomes and detail flags without double-counting.
+        """Aggregate one mutually-prioritized outcome per inbound event.
 
-        ``escalated`` is the complete union of persistent escalation records and
-        ``decision=escalate`` traces. ``processed`` is a system-handled metric:
-        normal supported outcomes count once, and the explicit
-        ``wants_new_school`` business flow is also counted as processed even when
-        that same event has an escalation record. ``unprocessed`` is computed
-        from the event-state union rather than subtraction, so overlapping
-        metrics cannot create negative or inflated values.
+        Reporting categories follow the business contract:
+        escalation has highest priority; then LLM answer; then ignored; all
+        other supported non-escalated automated outcomes (including Top-3) are
+        grouped into ``template``. ``wants_new_school`` is a handled business
+        flow and is included in ``processed`` even when it also escalates.
         """
         events = self._event_outcomes(start, end)
 
         is_escalated = events.c.interaction_escalated | (events.c.persistent_escalated == 1)
-        handled_without_escalation = (
-            events.c.template
-            | events.c.llm
-            | events.c.top3
-            | events.c.clarify
-            | events.c.rephrase
-        ) & ~is_escalated
-        # ``wants_new_school`` is a known business flow that the system
-        # deliberately handles; keep it inside processed even when that flow
-        # also has an escalation record. This is intentionally an overlap
-        # metric, while ``escalated`` remains the complete escalation total.
-        processed_system = handled_without_escalation | events.c.wants_new_school
-        ignored_only = ~processed_system & events.c.ignored & ~is_escalated
-        unprocessed_flag = ~(is_escalated | processed_system | events.c.ignored)
+        is_llm = ~is_escalated & events.c.llm
+        is_ignored = ~is_escalated & ~is_llm & events.c.ignored
+        is_template = (
+            ~is_escalated
+            & ~is_llm
+            & ~is_ignored
+            & (
+                events.c.template
+                | events.c.top3
+                | events.c.clarify
+                | events.c.rephrase
+                | events.c.wants_new_school
+            )
+        )
+
+        # A request is considered processed when the system produced any
+        # non-escalation outcome. ``wants_new_school`` remains a handled flow
+        # even if a separate escalation record exists for the same event.
+        processed_system = is_llm | is_ignored | is_template | events.c.wants_new_school
 
         stmt = select(
             func.count().label("total_scoped"),
             func.sum(case((is_escalated, 1), else_=0)).label("escalated"),
             func.sum(case((processed_system, 1), else_=0)).label("processed"),
-            func.sum(case((ignored_only, 1), else_=0)).label("ignored"),
-            func.sum(
-                case(
-                    (
-                        ~events.c.interaction_escalated
-                        & (events.c.persistent_escalated == 0)
-                        & events.c.template,
-                        1,
-                    ),
-                    else_=0,
-                )
-            ).label("template"),
-            func.sum(
-                case(
-                    (
-                        ~events.c.interaction_escalated
-                        & (events.c.persistent_escalated == 0)
-                        & events.c.llm,
-                        1,
-                    ),
-                    else_=0,
-                )
-            ).label("llm"),
-            func.sum(
-                case(
-                    (
-                        ~events.c.interaction_escalated
-                        & (events.c.persistent_escalated == 0)
-                        & events.c.top3,
-                        1,
-                    ),
-                    else_=0,
-                )
-            ).label("top3"),
-            func.sum(
-                case(
-                    (
-                        ~events.c.interaction_escalated
-                        & (events.c.persistent_escalated == 0)
-                        & (events.c.template | events.c.top3),
-                        1,
-                    ),
-                    else_=0,
-                )
-            ).label("automatic_response"),
-            func.sum(case((unprocessed_flag, 1), else_=0)).label("unprocessed"),
+            func.sum(case((is_ignored, 1), else_=0)).label("ignored"),
+            func.sum(case((is_template, 1), else_=0)).label("template"),
+            func.sum(case((is_llm, 1), else_=0)).label("llm"),
             func.sum(case((events.c.automated, 1), else_=0)).label("automated"),
             func.sum(case((events.c.llm_used, 1), else_=0)).label("llm_used"),
         ).select_from(events)
 
         row = (await self.session.execute(stmt)).one()
-        values = [int(value or 0) for value in row]
         (
             _total_scoped,
             escalated,
@@ -197,12 +156,9 @@ class StatisticsRepository:
             ignored,
             template,
             llm,
-            top3,
-            automatic_response,
-            unprocessed,
             automated,
             llm_used,
-        ) = values
+        ) = [int(value or 0) for value in row]
 
         total = await self.get_total_requests(start, end)
 
@@ -220,12 +176,9 @@ class StatisticsRepository:
             "ignored": ignored,
             "template": template,
             "llm": llm,
-            "top3": top3,
-            "automatic_response": automatic_response,
             "automated": automated,
             "llm_used": llm_used,
             "with_interaction": with_interaction,
-            "unprocessed": unprocessed,
         }
 
     async def get_escalated_events(self, start: datetime, end: datetime) -> int:
@@ -260,14 +213,44 @@ class StatisticsRepository:
             .group_by(EscalatedConversation.source_event_id)
         ).subquery()
 
+        raw_reason = func.coalesce(
+            persistent_reasons.c.reason,
+            interaction_reasons.c.reason,
+            "no_category",
+        )
+        # Public reporting intentionally has no ``other`` bucket.
+        #
+        # - ``wants_new_school`` is not a public escalation reason, but if it
+        #   reaches the escalation-reason stream it is grouped into the
+        #   existing no-category bucket.
+        # - High-risk paths are also intentionally grouped into no-category
+        #   for the current reporting contract.
+        # - Any future/unknown escalation reason is retained in the aggregate
+        #   rather than silently disappearing from the report and is grouped
+        #   into no-category until a dedicated public bucket is introduced.
+        public_reason = case(
+            (raw_reason.in_((
+                "wants_new_school",
+                "high_risk_refund",
+                "high_risk_personal_data",
+                "high_risk_complaint",
+                "clarification_exhausted",
+            )), "no_category"),
+            (raw_reason.in_((
+                "user_requested_operator",
+                "no_category",
+                "attachments",
+                "llm_cannot_answer",
+                "internal_error",
+                "delivery_failure",
+            )), raw_reason),
+            else_="no_category",
+        )
+
         event_reasons = (
             select(
                 InboundEvent.id.label("event_id"),
-                func.coalesce(
-                    persistent_reasons.c.reason,
-                    interaction_reasons.c.reason,
-                    "other",
-                ).label("reason"),
+                public_reason.label("reason"),
             )
             .select_from(InboundEvent)
             .outerjoin(

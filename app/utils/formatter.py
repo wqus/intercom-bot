@@ -16,14 +16,9 @@ def format_statistics(stats: dict, start: datetime, end: datetime) -> str:
     processed = int(stats["processed"])
     escalated = int(stats["escalated"])
     ignored = int(stats.get("ignored", 0))
-    unprocessed = int(stats.get("unprocessed", 0))
     results = dict(stats.get("results") or [])
     types = dict(stats.get("request_types") or [])
 
-    automatic_response = int(
-        stats.get("automatic_response")
-        or (int(results.get("template", 0)) + int(results.get("top3", 0)))
-    )
     shown_end = _display_end(end)
 
     lines = [
@@ -34,13 +29,10 @@ def format_statistics(stats: dict, start: datetime, end: datetime) -> str:
         f"✅ Обработано: <b>{processed}</b> ({_pct(processed, total):.1f}%)",
         f"⚠️ Эскалировано: <b>{escalated}</b> ({_pct(escalated, total):.1f}%)",
         f"🚫 Игнорировано: <b>{ignored}</b> ({_pct(ignored, total):.1f}%)",
-        f"⏳ Не обработано: <b>{unprocessed}</b> ({_pct(unprocessed, total):.1f}%)",
         "",
         "<b>Результаты:</b>",
-        f"• Шаблон: {results.get('template', 0)} ({_pct(results.get('template', 0), total):.1f}%)",
-        f"• Top-3: {results.get('top3', 0)} ({_pct(results.get('top3', 0), total):.1f}%)",
+        f"• Автоматический ответ: {results.get('template', 0)} ({_pct(results.get('template', 0), total):.1f}%)",
         f"• LLM: {results.get('llm', 0)} ({_pct(results.get('llm', 0), total):.1f}%)",
-        f"• Автоответ (шаблон + Top-3): {automatic_response} ({_pct(automatic_response, total):.1f}%)",
         "",
         "<b>Тип обращения:</b>",
         f"• Диалоги: {types.get('conversation', 0)} ({_pct(types.get('conversation', 0), total):.1f}%)",

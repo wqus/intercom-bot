@@ -16,13 +16,10 @@ class StatisticsService:
             "escalated": result_counts["escalated"],
             "ignored": result_counts["ignored"],
             "with_interaction": result_counts["with_interaction"],
-            "unprocessed": result_counts["unprocessed"],
             "automated": result_counts["automated"],
             "llm_used": result_counts["llm_used"],
-            "automatic_response": result_counts["automatic_response"],
             "results": [
                 ("template", result_counts["template"]),
-                ("top3", result_counts["top3"]),
                 ("llm", result_counts["llm"]),
                 ("ignored", result_counts["ignored"]),
             ],
